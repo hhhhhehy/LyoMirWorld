@@ -2025,8 +2025,249 @@ namespace GameServer
                 return dy > 0 ? Direction.Down : Direction.Up;
         }
     }
+    #endregion
+
+    #region Gem System
+
+    /// <summary>
+    /// 宝石镶嵌系统 - 装备打孔、宝石镶嵌/卸下/合成
+    /// </summary>
+    public sealed class GemInlaySystem
+    {
+        // 装备可打孔数量上限（按品质）
+        private static readonly Dictionary<ItemQuality, int> MaxHolesByQuality = new()
+        {
+            { ItemQuality.Gray, 0 },      // 白板不可打孔
+            { ItemQuality.White, 1 },      // 白装1孔
+            { ItemQuality.Green, 2 },      // 绿装2孔
+            { ItemQuality.Blue, 3 },       // 蓝装3孔
+            { ItemQuality.Purple, 4 },     // 紫装4孔
+            { ItemQuality.Orange, 5 },     // 橙装5孔
+            { ItemQuality.Gold, 6 },       // 金装6孔
+        };
+
+        // 宝石类型枚举
+        public enum GemType : byte
+        {
+            Red = 1,      // 攻击宝石
+            Blue = 2,     // 防御宝石
+            Green = 3,    // 生命宝石
+            Yellow = 4,   // 幸运宝石
+            Purple = 5,   // 魔法宝石
+            White = 6,    // 经验宝石（打怪经验加成）
+        }
+
+        // 宝石定义
+        public static readonly Dictionary<GemType, (int DC, int AC, int HP, int Lucky, int MC, int ExpBonus)> GemStats = new()
+        {
+            { GemType.Red,    (DC: 5, AC: 0, HP: 0, Lucky: 0, MC: 0, ExpBonus: 0) },    // +5攻击
+            { GemType.Blue,   (DC: 0, AC: 5, HP: 0, Lucky: 0, MC: 0, ExpBonus: 0) },   // +5防御
+            { GemType.Green,  (DC: 0, AC: 0, HP: 100, Lucky: 0, MC: 0, ExpBonus: 0) },// +100生命
+            { GemType.Yellow, (DC: 0, AC: 0, HP: 0, Lucky: 1, MC: 0, ExpBonus: 0) },   // +1幸运
+            { GemType.Purple, (DC: 0, AC: 0, HP: 0, Lucky: 0, MC: 5, ExpBonus: 0) },  // +5魔法
+            { GemType.White,  (DC: 0, AC: 0, HP: 0, Lucky: 0, MC: 0, ExpBonus: 10) }, // +10%经验
+        };
+
+        // 宝石等级缩放（每级+50%效果）
+        private static readonly int[] GemLevelScale = { 100, 150, 200, 300, 400, 500 };
+
+        private readonly HumanPlayer _owner;
+
+        public GemInlaySystem(HumanPlayer owner)
+        {
+            _owner = owner;
+        }
+
+        /// <summary>给装备打一个孔（消耗金币）</summary>
+        public string PunchHole(ItemInstance equipment)
+        {
+            if (equipment == null)
+                return "请选择要打孔的装备";
+
+            if (equipment.Definition.Type < ItemType.Weapon || equipment.Definition.Type > ItemType.Ring)
+                return "此物品无法打孔";
+
+            int currentHoles = GetHoleCount(equipment);
+            int maxHoles = MaxHolesByQuality.GetValueOrDefault(equipment.Definition.Quality, 0);
+
+            if (currentHoles >= maxHoles)
+                return $"该装备最多可打 {maxHoles} 个孔，当前已有 {currentHoles} 个";
+
+            // 打孔费用：基础2000金币，每孔递增
+            uint cost = (uint)(2000 * (currentHoles + 1) * 100);
+            if (_owner.Gold < cost)
+                return $"打孔需要 {cost} 金币，当前金币不足";
+
+            _owner.Gold -= cost;
+            _owner.SendMoneyChanged(MoneyType.Gold);
+
+            int newHoleIndex = currentHoles;
+            // 在 ExtraStats 中记录孔位，key = "Hole_0", "Hole_1", ...
+            equipment.ExtraStats[$"Hole_{newHoleIndex}"] = 0; // 0表示空孔
+            equipment.ExtraStats["HoleCount"] = currentHoles + 1;
+
+            _owner.Equipment.RecalcTotalStats();
+            return $"打孔成功！消耗 {cost} 金币。";
+        }
+
+        /// <summary>镶嵌宝石到装备孔位</summary>
+        public string InlayGem(ItemInstance equipment, int holeIndex, ItemInstance gemItem)
+        {
+            if (equipment == null)
+                return "请选择要镶嵌的装备";
+            if (gemItem == null)
+                return "请选择要镶嵌的宝石";
+
+            int holeCount = GetHoleCount(equipment);
+            if (holeIndex < 0 || holeIndex >= holeCount)
+                return "无效的孔位";
+
+            string holeKey = $"Hole_{holeIndex}";
+            if (!equipment.ExtraStats.ContainsKey(holeKey))
+                return "该孔位不存在";
+
+            if (equipment.ExtraStats[holeKey] != 0)
+                return "该孔位已有宝石，请先取下";
+
+            // 验证宝石是否是合法宝石物品
+            if (!TryParseGemType(gemItem.Definition.Name, out GemType gemType))
+                return "该物品不是可镶嵌的宝石";
+
+            // 消耗宝石（数量-1，0则删除）
+            if (gemItem.Count > 1)
+                gemItem.Count--;
+            else
+                _owner.Inventory.RemoveItem(gemItem, notify: false);
+
+            // 镶嵌
+            equipment.ExtraStats[holeKey] = (int)gemType;
+
+            _owner.Equipment.RecalcTotalStats();
+            return $"成功镶嵌 {gemItem.Definition.Name}！";
+        }
+
+        /// <summary>从装备孔位取下宝石（返还宝石）</summary>
+        public string RemoveGem(ItemInstance equipment, int holeIndex)
+        {
+            if (equipment == null)
+                return "请选择要取下宝石的装备";
+
+            int holeCount = GetHoleCount(equipment);
+            if (holeIndex < 0 || holeIndex >= holeCount)
+                return "无效的孔位";
+
+            string holeKey = $"Hole_{holeIndex}";
+            if (!equipment.ExtraStats.ContainsKey(holeKey))
+                return "该孔位不存在";
+
+            int gemTypeValue = equipment.ExtraStats[holeKey];
+            if (gemTypeValue == 0)
+                return "该孔位是空的";
+
+            if (!_owner.Inventory.HasFreeSlot())
+                return "背包空间不足，无法取下宝石";
+
+            var gemType = (GemType)gemTypeValue;
+            string gemName = GetGemName(gemType);
+
+            // 返还宝石给玩家
+            var gemDef = _owner.GetItemDefByName(gemName);
+            if (gemDef != null)
+            {
+                var gemInstance = ItemInstance.Create(gemDef, ItemManager.Instance.GetNextInstanceId());
+                if (gemInstance != null)
+                    _owner.Inventory.AddItem(gemInstance);
+            }
+
+            // 清空孔位
+            equipment.ExtraStats[holeKey] = 0;
+
+            _owner.Equipment.RecalcTotalStats();
+            return $"已取下 {gemName}。";
+        }
+
+        /// <summary>获取装备已开孔数量</summary>
+        public static int GetHoleCount(ItemInstance equipment)
+        {
+            if (equipment?.ExtraStats == null)
+                return 0;
+            return equipment.ExtraStats.GetValueOrDefault("HoleCount", 0);
+        }
+
+        /// <summary>获取装备已镶嵌宝石的总属性加成（用于 RecalcTotalStats）</summary>
+        public static (int DC, int AC, int HP, int Lucky, int MC, int ExpBonus) GetGemBonus(ItemInstance? equipment)
+        {
+            int totalDC = 0, totalAC = 0, totalHP = 0, totalLucky = 0, totalMC = 0, totalExpBonus = 0;
+
+            if (equipment?.ExtraStats == null)
+                return (totalDC, totalAC, totalHP, totalLucky, totalMC, totalExpBonus);
+
+            int holeCount = equipment.ExtraStats.GetValueOrDefault("HoleCount", 0);
+            for (int i = 0; i < holeCount; i++)
+            {
+                int gemTypeVal = equipment.ExtraStats.GetValueOrDefault($"Hole_{i}", 0);
+                if (gemTypeVal > 0 && GemStats.TryGetValue((GemType)gemTypeVal, out var stats))
+                {
+                    // 宝石等级：默认1级，按特殊属性缩放（这里简化处理，全部按1级）
+                    int scale = GemLevelScale[0];
+                    totalDC += (stats.DC * scale) / 100;
+                    totalAC += (stats.AC * scale) / 100;
+                    totalHP += (stats.HP * scale) / 100;
+                    totalLucky += (stats.Lucky * scale) / 100;
+                    totalMC += (stats.MC * scale) / 100;
+                    totalExpBonus += stats.ExpBonus;
+                }
+            }
+
+            return (totalDC, totalAC, totalHP, totalLucky, totalMC, totalExpBonus);
+        }
+
+        /// <summary>宝石名称推断类型</summary>
+        private static bool TryParseGemName(string name, out GemType type)
+        {
+            foreach (var kv in GemStats)
+            {
+                if (name.Contains(kv.Key.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    type = kv.Key;
+                    return true;
+                }
+            }
+            type = default;
+            return false;
+        }
+
+        /// <summary>根据物品名称尝试解析宝石类型</summary>
+        private static bool TryParseGemType(string name, out GemType type)
+        {
+            // 匹配 "红宝石" / "攻击宝石" / "宝石(红)" 等命名
+            string lower = name.ToLower();
+            if (lower.Contains("攻击") || lower.Contains("红")) { type = GemType.Red; return true; }
+            if (lower.Contains("防御") || lower.Contains("蓝")) { type = GemType.Blue; return true; }
+            if (lower.Contains("生命") || lower.Contains("绿")) { type = GemType.Green; return true; }
+            if (lower.Contains("幸运") || lower.Contains("黄")) { type = GemType.Yellow; return true; }
+            if (lower.Contains("魔法") || lower.Contains("紫")) { type = GemType.Purple; return true; }
+            if (lower.Contains("经验") || lower.Contains("白")) { type = GemType.White; return true; }
+            type = default;
+            return false;
+        }
+
+        /// <summary>宝石类型对应的中文名</summary>
+        private static string GetGemName(GemType type)
+        {
+            return type switch
+            {
+                GemType.Red => "攻击宝石",
+                GemType.Blue => "防御宝石",
+                GemType.Green => "生命宝石",
+                GemType.Yellow => "幸运宝石",
+                GemType.Purple => "魔法宝石",
+                GemType.White => "经验宝石",
+                _ => "未知宝石"
+            };
+        }
+    }
 
     #endregion
 
-    #endregion
 }

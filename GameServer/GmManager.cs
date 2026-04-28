@@ -222,6 +222,12 @@ namespace GameServer
                     return CmdTrain(player);
                 case "STOPTRAIN":
                     return CmdStopTrain(player);
+                case "PUNCHHOLE":
+                    return CmdPunchHole(player, args);
+                case "INLAY":
+                    return CmdInlay(player, args);
+                case "REMOVEGEM":
+                    return CmdRemoveGem(player, args);
                 default:
                     player.SaySystem($"未实现命令: {builtinCommand}");
                     return 0;
@@ -439,6 +445,42 @@ namespace GameServer
             player.OnlineTrainingSystem.StopTraining();
             player.SaySystem("挂机已停止");
             return 1;
+        }
+
+        private uint CmdPunchHole(HumanPlayer player, string[] args)
+        {
+            if (player.GemInlaySystem == null) { player.SaySystem("宝石系统不可用"); return 0; }
+            if (args.Length < 1) { player.SaySystem("用法: @PUNCHHOLE <背包中装备名>"); return 0; }
+            var eq = player.Inventory.GetItem(args[0]);
+            if (eq == null) { player.SaySystem("背包中找不到该装备"); return 0; }
+            string result = player.GemInlaySystem.PunchHole(eq);
+            player.SaySystem(result);
+            return result.Contains("成功") ? 1u : 0;
+        }
+
+        private uint CmdInlay(HumanPlayer player, string[] args)
+        {
+            if (player.GemInlaySystem == null) { player.SaySystem("宝石系统不可用"); return 0; }
+            if (args.Length < 3) { player.SaySystem("用法: @INLAY <装备名> <孔位> <宝石名>"); return 0; }
+            var eq = player.Inventory.GetItem(args[0]) ?? player.Equipment.GetItem(EquipSlot.Weapon);
+            if (eq == null) { player.SaySystem("找不到该装备"); return 0; }
+            if (!int.TryParse(args[1], out int hole)) { player.SaySystem("孔位必须是数字"); return 0; }
+            var gem = player.Inventory.GetItem(args[2]);
+            string result = player.GemInlaySystem.InlayGem(eq, hole, gem);
+            player.SaySystem(result);
+            return result.Contains("成功") ? 1u : 0;
+        }
+
+        private uint CmdRemoveGem(HumanPlayer player, string[] args)
+        {
+            if (player.GemInlaySystem == null) { player.SaySystem("宝石系统不可用"); return 0; }
+            if (args.Length < 2) { player.SaySystem("用法: @REMOVEGEM <装备名> <孔位>"); return 0; }
+            var eq = player.Inventory.GetItem(args[0]) ?? player.Equipment.GetItem(EquipSlot.Weapon);
+            if (eq == null) { player.SaySystem("找不到该装备"); return 0; }
+            if (!int.TryParse(args[1], out int hole)) { player.SaySystem("孔位必须是数字"); return 0; }
+            string result = player.GemInlaySystem.RemoveGem(eq, hole);
+            player.SaySystem(result);
+            return result.Contains("已取下") ? 1u : 0;
         }
 
         private static bool TryParseCmdListLine(string line, out int level, out string alias, out string builtin)

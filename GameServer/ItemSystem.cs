@@ -747,6 +747,28 @@ namespace GameServer
                     stats.Lucky += item.GetTotalLucky();
                     stats.MaxHP += item.GetTotalHP();
                     stats.MaxMP += item.GetTotalMP();
+
+                    // 宝石镶嵌属性加成
+                    if (item.ExtraStats != null)
+                    {
+                        int holeCount = item.ExtraStats.GetValueOrDefault("HoleCount", 0);
+                        for (int i = 0; i < holeCount; i++)
+                        {
+                            int gemTypeVal = item.ExtraStats.GetValueOrDefault($"Hole_{i}", 0);
+                            if (gemTypeVal > 0)
+                            {
+                                switch ((GemInlaySystem.GemType)gemTypeVal)
+                                {
+                                    case GemInlaySystem.GemType.Red: stats.MaxDC += 5; break;
+                                    case GemInlaySystem.GemType.Blue: stats.MaxAC += 5; break;
+                                    case GemInlaySystem.GemType.Green: stats.MaxHP += 100; break;
+                                    case GemInlaySystem.GemType.Yellow: stats.Lucky += 1; break;
+                                    case GemInlaySystem.GemType.Purple: stats.MaxMP += 50; break;
+                                    case GemInlaySystem.GemType.White: break; // 经验宝石无战斗属性
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
