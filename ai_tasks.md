@@ -61,11 +61,10 @@
 - [x] **P1-TASK-001**: 新增 DailySignInSystem（每日签到）✅
   - 签到奖励配置（7天循环递增奖励：金币/经验/祝福油）
   - JSON文件持久化（Data/SignIn/{charId}.json），无DB依赖
-  - NPC对话 SIGNIN action 触发
-  - HumanPlayer 集成实例化
+  - NPC"福利姐姐"对话触发 ✅
   - 验证：连续签到7天奖励递增，断签重置
 
-- [ ] **P1-TASK-002**: 新增 OnlineTrainingSystem（在线挂机）
+- [x] **P1-TASK-002**: 新增 OnlineTrainingSystem（在线挂机）✅
   - 挂机状态管理（开始/暂停/结束）
   - 自动寻怪/攻击/拾取
   - 自动使用药水/技能
