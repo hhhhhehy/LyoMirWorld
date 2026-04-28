@@ -1,0 +1,19 @@
+# Game Command List
+# Format: Level(权限等级) = Alias(命令别名) = BuiltinCommand(内置命令)
+# Level > 0  : GM专属命令
+# Level < 0  : 对玩家开放的命令，Level为负数的绝对值表示玩家最低等级要求
+
+# 基础命令
+1 = GAMEMASTER = GAMEMASTER
+0 = GIVE = GIVE
+0 = GIVEGOLD = GIVEGOLD
+0 = GIVEEXP = GIVEEXP
+0 = GIVEXUANBAO = GIVEYUANBAO
+
+# 挂机系统 (玩家可用，等级1)
+-1 = TRAIN = TRAIN
+-1 = STOPTRAIN = STOPTRAIN
+
+# 管理员命令
+1 = RELOADCMDLIST = RELOADCMDLIST
+1 = RELOADMARKET = RELOADMARKET

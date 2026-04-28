@@ -1576,5 +1576,457 @@ namespace GameServer
         public int CurrentRewardDay { get; set; }
     }
 
+    #region 在线挂机系统
+
+    /// <summary>
+    /// 在线挂机系统
+    /// - 自动寻怪/攻击/拾取
+    /// - 自动使用药水/技能
+    /// - 挂机范围和安全区检测
+    /// - 与客户端解耦，纯服务端AI
+    /// </summary>
+    public class OnlineTrainingSystem
+    {
+        private readonly HumanPlayer _owner;
+
+        // 挂机状态
+        private bool _isEnabled;
+        private DateTime _lastUpdateTime;
+        private DateTime _lastPickupTime;
+        private DateTime _lastHealTime;
+        private DateTime _lastBuffTime;
+        private DateTime _lastMoveTime;
+
+        // 挂机配置
+        private int _searchRange = 8;       // 搜索怪物范围
+        private int _pickupRange = 2;        // 拾取物品范围
+        private int _healHpPercent = 50;     // 低于此血量百分比时喝药
+        private int _healMpPercent = 30;     // 低于此魔法百分比时喝药
+        private int _safeHpPercent = 80;     // 低于此血量时停止攻击
+        private int _autoSkillSlot = 0;      // 自动释放技能槽位（-1=不用技能）
+
+        // 挂机状态
+        private MonsterSystem.Monster? _currentTarget;
+        private int _targetDeadCount;        // 连续未找到目标计数
+        private int _stuckCount;             // 卡住计数
+
+        // 坐标记录（用于检测卡住）
+        private ushort _lastPosX;
+        private ushort _lastPosY;
+        private DateTime _lastPosCheckTime;
+
+        public bool IsEnabled => _isEnabled;
+
+        public OnlineTrainingSystem(HumanPlayer owner)
+        {
+            _owner = owner;
+            _isEnabled = false;
+            _lastUpdateTime = DateTime.Now;
+        }
+
+        /// <summary>
+        /// 开始挂机
+        /// </summary>
+        public void Start()
+        {
+            if (_owner.IsDead)
+            {
+                _owner.Say("死亡状态下无法挂机！");
+                return;
+            }
+
+            _isEnabled = true;
+            _currentTarget = null;
+            _targetDeadCount = 0;
+            _stuckCount = 0;
+            _lastPosX = _owner.X;
+            _lastPosY = _owner.Y;
+            _lastPosCheckTime = DateTime.Now;
+            _lastUpdateTime = DateTime.Now;
+
+            _owner.Say("=== 开始挂机 ===");
+            LogManager.Default.Info($"玩家 {_owner.Name} 开始挂机");
+        }
+
+        /// <summary>
+        /// 停止挂机
+        /// </summary>
+        public void Stop()
+        {
+            if (!_isEnabled) return;
+
+            _isEnabled = false;
+            _currentTarget = null;
+            _owner.Say("=== 挂机已停止 ===");
+            LogManager.Default.Info($"玩家 {_owner.Name} 停止挂机");
+        }
+
+        /// <summary>
+        /// 每帧更新（由 HumanPlayer.Update 调用）
+        /// </summary>
+        public void Update()
+        {
+            if (!_isEnabled) return;
+            if (_owner.IsDead)
+            {
+                Stop();
+                return;
+            }
+
+            var now = DateTime.Now;
+
+            // 挂机逻辑每 200ms 执行一次
+            if ((now - _lastUpdateTime).TotalMilliseconds < 200)
+                return;
+            _lastUpdateTime = now;
+
+            // 1. 检测是否卡住
+            CheckStuck();
+
+            // 2. 安全检测
+            if (!CheckSafety())
+                return;
+
+            // 3. 检查是否需要补血/补魔
+            if (CheckAndUsePotion())
+                return;
+
+            // 4. 检查是否有物品可拾取
+            if (CheckAndPickupItem())
+                return;
+
+            // 5. 攻击逻辑
+            UpdateCombat();
+        }
+
+        /// <summary>
+        /// 检测是否卡住（坐标没变超过5秒）
+        /// </summary>
+        private void CheckStuck()
+        {
+            var now = DateTime.Now;
+            if ((now - _lastPosCheckTime).TotalSeconds >= 5)
+            {
+                if (_owner.X == _lastPosX && _owner.Y == _lastPosY)
+                {
+                    _stuckCount++;
+                    if (_stuckCount >= 3)
+                    {
+                        // 随机移动一步
+                        var dirs = Enum.GetValues<Direction>();
+                        var randomDir = dirs[Random.Shared.Next(dirs.Length)];
+                        _owner.Walk(randomDir);
+                        _stuckCount = 0;
+                    }
+                }
+                else
+                {
+                    _stuckCount = 0;
+                }
+                _lastPosX = _owner.X;
+                _lastPosY = _owner.Y;
+                _lastPosCheckTime = now;
+            }
+        }
+
+        /// <summary>
+        /// 安全检测（血量过低或安全区）
+        /// </summary>
+        private bool CheckSafety()
+        {
+            if (_owner.CurrentHP <= 0 || _owner.IsDead)
+            {
+                Stop();
+                return false;
+            }
+
+            int hpPercent = _owner.MaxHP > 0 ? (_owner.CurrentHP * 100 / _owner.MaxHP) : 100;
+
+            // 血量低于安全线，停止攻击尝试移动
+            if (hpPercent < _safeHpPercent)
+            {
+                // 尝试随机移动找安全的地方
+                var dirs = Enum.GetValues<Direction>();
+                for (int i = 0; i < 3; i++)
+                {
+                    var dir = dirs[Random.Shared.Next(dirs.Length)];
+                    if (_owner.Walk(dir))
+                        return false;
+                }
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 检查并使用药水
+        /// </summary>
+        private bool CheckAndUsePotion()
+        {
+            var now = DateTime.Now;
+            if ((now - _lastHealTime).TotalSeconds < 2)
+                return false;
+
+            int hpPercent = _owner.MaxHP > 0 ? (_owner.CurrentHP * 100 / _owner.MaxHP) : 100;
+            int mpPercent = _owner.MaxMP > 0 ? (_owner.CurrentMP * 100 / _owner.MaxMP) : 100;
+
+            // 先检查HP
+            if (hpPercent < _healHpPercent)
+            {
+                // 找背包里的HP药水
+                var hpPotion = FindPotionItem(0); // 0=太阳水类型，实际按道具定义
+                if (hpPotion != null)
+                {
+                    _owner.UseItem(hpPotion.Position);
+                    _lastHealTime = now;
+                    return true;
+                }
+            }
+
+            // 再检查MP
+            if (mpPercent < _healMpPercent)
+            {
+                var mpPotion = FindMpPotionItem();
+                if (mpPotion != null)
+                {
+                    _owner.UseItem(mpPotion.Position);
+                    _lastHealTime = now;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private ItemInstance? FindPotionItem(int potionType)
+        {
+            foreach (var item in _owner.Inventory.Items)
+            {
+                if (item == null) continue;
+                // 简单判断：DBID 小于某阈值的是HP药水
+                if (item.Definition.DBID >= 20000 && item.Definition.DBID <= 20999)
+                    return item;
+            }
+            return null;
+        }
+
+        private ItemInstance? FindMpPotionItem()
+        {
+            foreach (var item in _owner.Inventory.Items)
+            {
+                if (item == null) continue;
+                // 魔法药水
+                if (item.Definition.DBID >= 21000 && item.Definition.DBID <= 21999)
+                    return item;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 检查并拾取地面物品
+        /// </summary>
+        private bool CheckAndPickupItem()
+        {
+            var now = DateTime.Now;
+            if ((now - _lastPickupTime).TotalMilliseconds < 500)
+                return false;
+
+            var map = _owner.CurrentMap as LogicMap;
+            if (map == null) return false;
+
+            var nearbyItems = map.GetItemsInRange(_owner.X, _owner.Y, _pickupRange);
+            foreach (var mapItem in nearbyItems)
+            {
+                if (mapItem == null) continue;
+                // 拾取
+                if (PickupItem(mapItem))
+                {
+                    _lastPickupTime = now;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool PickupItem(MapItem mapItem)
+        {
+            // 检查背包是否有空间
+            if (!_owner.Inventory.HasSlot())
+            {
+                return false;
+            }
+
+            // 发送拾取消息
+            var builder = new PacketBuilder();
+            builder.WriteUInt32(mapItem.ObjectId);
+            builder.WriteUInt16(0);
+            builder.WriteUInt16(0);
+            builder.WriteUInt16(0);
+            byte[] packet = builder.Build();
+
+            // 使用GM命令或直接处理
+            // 实际上拾取需要客户端发起，这里模拟
+            _owner.SendMessage(packet);
+            return true;
+        }
+
+        /// <summary>
+        /// 更新战斗逻辑
+        /// </summary>
+        private void UpdateCombat()
+        {
+            var now = DateTime.Now;
+
+            // 如果当前正在攻击动作中，不做处理
+            if (_owner.CurrentAction != ActionType.None)
+                return;
+
+            // 检查当前目标是否有效
+            if (_currentTarget != null)
+            {
+                if (_currentTarget.IsDead || _currentTarget.CurrentMap != _owner.CurrentMap)
+                {
+                    _currentTarget = null;
+                    _targetDeadCount++;
+                }
+            }
+
+            // 如果没有目标，搜索怪物
+            if (_currentTarget == null)
+            {
+                _currentTarget = FindMonster();
+                _targetDeadCount = 0;
+            }
+
+            // 多次没找到目标，随机走动
+            if (_currentTarget == null)
+            {
+                _targetDeadCount++;
+                if (_targetDeadCount >= 3 && (now - _lastMoveTime).TotalSeconds >= 3)
+                {
+                    var dirs = Enum.GetValues<Direction>();
+                    var dir = dirs[Random.Shared.Next(dirs.Length)];
+                    _owner.Walk(dir);
+                    _lastMoveTime = now;
+                    _targetDeadCount = 0;
+                }
+                return;
+            }
+
+            // 计算距离
+            int dx = Math.Abs(_currentTarget.X - _owner.X);
+            int dy = Math.Abs(_currentTarget.Y - _owner.Y);
+            int distance = Math.Max(dx, dy);
+
+            // 远程职业可以更远攻击
+            int attackRange = _owner.Job == 2 ? 8 : 1; // 法师职业
+
+            if (distance > attackRange)
+            {
+                // 走向目标
+                MoveToward(_currentTarget.X, _currentTarget.Y);
+            }
+            else
+            {
+                // 攻击
+                AttackTarget();
+            }
+        }
+
+        private MonsterSystem.Monster? FindMonster()
+        {
+            var map = _owner.CurrentMap as LogicMap;
+            if (map == null) return null;
+
+            var monsters = map.GetMonstersInRange(_owner.X, _owner.Y, _searchRange);
+            MonsterSystem.Monster? nearest = null;
+            int minDist = int.MaxValue;
+
+            foreach (var m in monsters)
+            {
+                if (m is not MonsterSystem.Monster monster)
+                    continue;
+                if (monster.IsDead)
+                    continue;
+
+                int dx = Math.Abs(monster.X - _owner.X);
+                int dy = Math.Abs(monster.Y - _owner.Y);
+                int dist = dx + dy;
+
+                if (dist < minDist)
+                {
+                    minDist = dist;
+                    nearest = monster;
+                }
+            }
+
+            return nearest;
+        }
+
+        private void MoveToward(ushort targetX, ushort targetY)
+        {
+            // 计算方向
+            Direction dir;
+            int dx = targetX - _owner.X;
+            int dy = targetY - _owner.Y;
+
+            if (dx == 0 && dy == 0) return;
+
+            // 简单方向判断
+            if (Math.Abs(dx) > Math.Abs(dy))
+            {
+                dir = dx > 0 ? Direction.Right : Direction.Left;
+            }
+            else
+            {
+                dir = dy > 0 ? Direction.Down : Direction.Up;
+            }
+
+            // 优先走向目标
+            if (_owner.Walk(dir))
+                return;
+
+            // 尝试相邻方向
+            var dirs = new[] { Direction.Up, Direction.Down, Direction.Left, Direction.Right };
+            foreach (var d in dirs)
+            {
+                if (d == dir) continue;
+                if (_owner.Walk(d))
+                    return;
+            }
+        }
+
+        private void AttackTarget()
+        {
+            if (_currentTarget == null || _currentTarget.IsDead)
+                return;
+
+            // 计算朝向
+            Direction dir = GetDirection(_owner.X, _owner.Y, _currentTarget.X, _currentTarget.Y);
+
+            // 普通攻击
+            _owner.Attack(dir);
+
+            // 更新成就击杀数
+            _owner.AchievementSystem?.UpdateProgress(AchievementType.PvPKill, 1);
+        }
+
+        private static Direction GetDirection(ushort fromX, ushort fromY, ushort toX, ushort toY)
+        {
+            int dx = toX - fromX;
+            int dy = toY - fromY;
+
+            if (dx == 0 && dy == 0) return Direction.Down;
+            if (Math.Abs(dx) > Math.Abs(dy))
+                return dx > 0 ? Direction.Right : Direction.Left;
+            else
+                return dy > 0 ? Direction.Down : Direction.Up;
+        }
+    }
+
+    #endregion
+
     #endregion
 }

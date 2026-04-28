@@ -218,6 +218,10 @@ namespace GameServer
                     return CmdReloadCmdList(player);
                 case "RELOADMARKET":
                     return CmdReloadMarket(player);
+                case "TRAIN":
+                    return CmdTrain(player);
+                case "STOPTRAIN":
+                    return CmdStopTrain(player);
                 default:
                     player.SaySystem($"未实现命令: {builtinCommand}");
                     return 0;
@@ -409,6 +413,32 @@ namespace GameServer
                 player.SaySystem("商城重载失败");
                 return 0;
             }
+        }
+
+        private uint CmdTrain(HumanPlayer player)
+        {
+            if (player.OnlineTrainingSystem == null)
+            {
+                player.SaySystem("挂机系统不可用");
+                return 0;
+            }
+
+            bool success = player.OnlineTrainingSystem.StartTraining();
+            player.SaySystem(success ? "挂机已开始" : "挂机失败: 状态不允许");
+            return success ? 1u : 0;
+        }
+
+        private uint CmdStopTrain(HumanPlayer player)
+        {
+            if (player.OnlineTrainingSystem == null)
+            {
+                player.SaySystem("挂机系统不可用");
+                return 0;
+            }
+
+            player.OnlineTrainingSystem.StopTraining();
+            player.SaySystem("挂机已停止");
+            return 1;
         }
 
         private static bool TryParseCmdListLine(string line, out int level, out string alias, out string builtin)
