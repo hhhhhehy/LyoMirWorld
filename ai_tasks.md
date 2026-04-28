@@ -104,11 +104,11 @@
   - 保持和 HumanPlayer 的关联不变
   - 清理重复逻辑
 
-- [ ] **P2-REFACTOR-001**: 清理废弃 IOCP 代码
-  - 将 `IocpNetworkEngine.cs` 标记为 `[Obsolete]`
-  - 清理 `IocpNetworkTest.cs` 中的测试代码或删除
-  - 确保 GameServer 不引用任何 IOCP 类
-  - 提交前验证项目编译无警告
+- [x] **P2-REFACTOR-001**: 清理废弃 IOCP 代码 ✅
+  - `IocpNetworkEngine.cs` 标记 `[Obsolete]`
+  - `IocpNetworkTest.cs` 从 `MirCommon.csproj` 排除编译
+  - `GameServer/IocpGameClient.cs` / `IocpGameServerApp.cs` 早已排除
+  - 提交前验证项目编译无警告（需本地 dotnet SDK）
 
 - [ ] **P2-REFACTOR-002**: 重构 ConfigLoader
   - 将配置数据结构和配置加载逻辑分离

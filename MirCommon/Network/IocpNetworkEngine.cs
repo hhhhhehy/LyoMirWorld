@@ -13,6 +13,10 @@ namespace MirCommon.Network
     
     
     
+    /// <summary>
+    /// Windows IOCP 网络引擎（已废弃，请使用标准 TcpListener/TcpClient）
+    /// </summary>
+    [Obsolete("IOCP引擎已废弃，生产环境使用标准 TcpListener/TcpClient（已跨平台）")]
     public class IocpNetworkEngine : IDisposable
     {
         #region Windows IOCP API
