@@ -47,6 +47,7 @@
 | P2 | 清理废弃 IOCP 代码 | IocpNetworkEngine.cs | ✅ 已完成 |
 | P2 | 重构 ConfigLoader | ConfigLoader.cs (2521行) | ✅ 常量已集中 |
 | P3 | 统一数据库接口 | DatabaseManager.cs | ✅ 已有DatabaseFactory抽象层，支持SQLite/MySQL/SqlServer |
+| **FIX** | **PlayerAdvancedSystems.cs 编译修复** | **LangVersion/region/API适配** | ✅ **Linux dotnet build 通过** |
 
 ---
 
@@ -152,4 +153,4 @@
 
 _Last Updated: 2026-04-28_
 
-_Next: dev分支推送需Ayu本地验证（git pull + dotnet build），剩余P1-REFACTOR-001/002_
+_Next: dev分支已可在Linux dotnet build通过，剩余P1-REFACTOR-001/002需本地验证。_
