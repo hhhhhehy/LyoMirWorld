@@ -247,6 +247,7 @@ namespace GameServer
         public DailySignInSystem DailySignInSystem { get; private set; }
         public OnlineTrainingSystem OnlineTrainingSystem { get; private set; }
         public GemInlaySystem GemInlaySystem { get; private set; }
+        public VipSystem VipSystem { get; private set; }
 
         
         private PlayerSkill? _expMagic;
@@ -300,6 +301,7 @@ namespace GameServer
             DailySignInSystem = new DailySignInSystem(this);
             OnlineTrainingSystem = new OnlineTrainingSystem(this);
             GemInlaySystem = new GemInlaySystem(this);
+            VipSystem = new VipSystem(this);
 
             
             Level = 1;

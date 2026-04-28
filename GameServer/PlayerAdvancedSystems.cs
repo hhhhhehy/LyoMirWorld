@@ -2268,6 +2268,293 @@ namespace GameServer
         }
     }
 
+    #region VIP系统
+
+    /// <summary>
+    /// VIP会员系统
+    /// 8级VIP，每日礼包，经验/爆率/专属特权
+    /// 数据存储：JSON文件 Data/Vip/{charId}.json
+    /// </summary>
+    public class VipSystem
+    {
+        private readonly HumanPlayer _owner;
+
+        public VipLevel VipLevel { get; private set; }
+        public DateTime VipExpireTime { get; private set; }
+        public DateTime DateLastGift { get; private set; }
+        public int TotalRecharge { get; private set; }  // 累计充值(元)，决定VIP等级
+
+        private static readonly string VipDataPath = Path.Combine("Data", "Vip");
+
+        public VipSystem(HumanPlayer owner)
+        {
+            _owner = owner;
+            VipLevel = VipLevel.None;
+            VipExpireTime = DateTime.MinValue;
+            DateLastGift = DateTime.MinValue;
+            TotalRecharge = 0;
+            Load();
+        }
+
+        #region 数据加载/保存
+
+        private string GetFilePath() => Path.Combine(VipDataPath, $"{_owner.CharId}.json");
+
+        public void Load()
+        {
+            try
+            {
+                string path = GetFilePath();
+                if (!File.Exists(path)) return;
+                var json = File.ReadAllText(path);
+                var data = JsonConvert.DeserializeObject<VipData>(json);
+                if (data == null) return;
+                VipLevel = (VipLevel)data.VipLevel;
+                VipExpireTime = DateTime.Parse(data.VipExpireTime);
+                DateLastGift = DateTime.Parse(data.DateLastGift);
+                TotalRecharge = data.TotalRecharge;
+            }
+            catch { }
+        }
+
+        public void Save()
+        {
+            try
+            {
+                Directory.CreateDirectory(VipDataPath);
+                var data = new VipData
+                {
+                    VipLevel = (int)VipLevel,
+                    VipExpireTime = VipExpireTime.ToString("O"),
+                    DateLastGift = DateLastGift.ToString("O"),
+                    TotalRecharge = TotalRecharge
+                };
+                string json = JsonConvert.SerializeObject(data, Formatting.Indented);
+                File.WriteAllText(GetFilePath(), json);
+            }
+            catch { }
+        }
+
+        #endregion
+
+        #region VIP等级与特权
+
+        /// <summary>
+        /// 根据累计充值提升VIP等级（内部GM用）
+        /// </summary>
+        public void AddRecharge(int amount)
+        {
+            if (amount <= 0) return;
+            TotalRecharge += amount;
+            VipLevel newLevel = CalculateVipLevel(TotalRecharge);
+            if (newLevel != VipLevel)
+            {
+                VipLevel = newLevel;
+                VipExpireTime = DateTime.Now.AddYears(1);
+                Save();
+                _owner.SendNotice($"恭喜！您的VIP等级提升至 {(int)VipLevel}级");
+            }
+        }
+
+        /// <summary>
+        /// 手动设置VIP等级（GM命令用）
+        /// </summary>
+        public void SetVipLevel(int level, int days = 365)
+        {
+            VipLevel = (VipLevel)Math.Clamp(level, 0, 8);
+            VipExpireTime = DateTime.Now.AddDays(days);
+            Save();
+            _owner.SendNotice($"VIP等级已设置为 {(int)VipLevel}级，有效期{days}天");
+        }
+
+        private static VipLevel CalculateVipLevel(int totalRecharge)
+        {
+            return totalRecharge switch
+            {
+                >= 5000 => VipLevel.Gold,    // 5000+ 钻石VIP
+                >= 2000 => VipLevel.Diamond, // 2000+ 钻石VIP
+                >= 1000 => VipLevel.Royal,   // 1000+ 至尊VIP
+                >= 500 => VipLevel.Ultimate, // 500+ 终极VIP
+                >= 200 => VipLevel.Advanced, // 200+ 高级VIP
+                >= 100 => VipLevel.Middle,   // 100+ 中级VIP
+                >= 50 => VipLevel.Basic,     // 50+ 基础VIP
+                >= 10 => VipLevel.None,      // 10+ 普通VIP
+                _ => VipLevel.None
+            };
+        }
+
+        public bool IsVip() => VipLevel > VipLevel.None && DateTime.Now < VipExpireTime;
+
+        public int GetExpBonus() => IsVip() ? VipLevel switch
+        {
+            VipLevel.Basic => 5,
+            VipLevel.Middle => 10,
+            VipLevel.Advanced => 15,
+            VipLevel.Ultimate => 20,
+            VipLevel.Royal => 30,
+            VipLevel.Diamond => 50,
+            VipLevel.Gold => 80,
+            _ => 0
+        } : 0;
+
+        public double GetDropBonus() => IsVip() ? VipLevel switch
+        {
+            VipLevel.Basic => 0.05,
+            VipLevel.Middle => 0.10,
+            VipLevel.Advanced => 0.15,
+            VipLevel.Ultimate => 0.20,
+            VipLevel.Royal => 0.30,
+            VipLevel.Diamond => 0.50,
+            VipLevel.Gold => 1.00,
+            _ => 0.0
+        } : 0.0;
+
+        public int GetDailyGiftGold() => IsVip() ? VipLevel switch
+        {
+            VipLevel.Basic => 50000,
+            VipLevel.Middle => 200000,
+            VipLevel.Advanced => 500000,
+            VipLevel.Ultimate => 1000000,
+            VipLevel.Royal => 3000000,
+            VipLevel.Diamond => 8000000,
+            VipLevel.Gold => 20000000,
+            _ => 0
+        } : 0;
+
+        public int GetMaxStallSlots() => IsVip() ? VipLevel switch
+        {
+            VipLevel.Basic => 5,
+            VipLevel.Middle => 8,
+            VipLevel.Advanced => 12,
+            VipLevel.Ultimate => 16,
+            VipLevel.Royal => 20,
+            VipLevel.Diamond => 30,
+            VipLevel.Gold => 50,
+            _ => 2
+        } : 2;
+
+        public int GetWarehousePages() => IsVip() ? VipLevel switch
+        {
+            VipLevel.Basic => 2,
+            VipLevel.Middle => 3,
+            VipLevel.Advanced => 4,
+            VipLevel.Ultimate => 5,
+            VipLevel.Royal => 6,
+            VipLevel.Diamond => 8,
+            VipLevel.Gold => 10,
+            _ => 1
+        } : 1;
+
+        #endregion
+
+        #region 每日礼包
+
+        /// <summary>
+        /// 尝试领取每日礼包
+        /// </summary>
+        public void TryClaimDailyGift()
+        {
+            if (!IsVip())
+            {
+                _owner.SendNotice("您还不是VIP会员，无法领取每日礼包");
+                return;
+            }
+            DateTime today = DateTime.Today;
+            if (DateLastGift.Date == today)
+            {
+                _owner.SendNotice("今日礼包已领取，请明天再来");
+                return;
+            }
+            DateLastGift = today;
+            int gold = GetDailyGiftGold();
+            if (gold > 0) _owner.AddGold(gold);
+            // VIP专属道具礼包（按等级）
+            var items = GetDailyGiftItems();
+            foreach (var (itemId, count) in items)
+            {
+                _owner.Items.AddItem(itemId, count);
+            }
+            Save();
+            _owner.SendNotice($"恭喜领取VIP{(int)VipLevel}每日礼包：{gold:N0}金币 + 道具");
+            _owner.SendGmPacket($"VIP每日礼包领取成功，金币{gold:N0}");
+        }
+
+        private List<(string ItemId, int Count)> GetDailyGiftItems()
+        {
+            return VipLevel switch
+            {
+                VipLevel.Basic => new() { ("GA1", 1) },        // 初级祝福油 x1
+                VipLevel.Middle => new() { ("GA1", 3), ("SW1", 1) },
+                VipLevel.Advanced => new() { ("GA1", 5), ("SW1", 2), ("DAM", 1) },
+                VipLevel.Ultimate => new() { ("GA1", 10), ("SW1", 5), ("DAM", 2), ("SC", 1) },
+                VipLevel.Royal => new() { ("GA1", 20), ("SW1", 10), ("DAM", 5), ("SC", 3), ("GM3", 1) },
+                VipLevel.Diamond => new() { ("GA1", 50), ("SW1", 30), ("DAM", 10), ("SC", 5), ("GM3", 3), ("GM4", 1) },
+                VipLevel.Gold => new() { ("GA1", 100), ("SW1", 50), ("DAM", 20), ("SC", 10), ("GM3", 5), ("GM4", 3), ("GM5", 1) },
+                _ => new()
+            };
+        }
+
+        #endregion
+
+        #region 经验加成（战斗中使用）
+
+        /// <summary>
+        /// 获得经验时调用此方法，返回实际应得经验（含VIP加成）
+        /// </summary>
+        public int ApplyExpBonus(int baseExp)
+        {
+            int bonus = GetExpBonus();
+            return bonus > 0 ? baseExp * (100 + bonus) / 100 : baseExp;
+        }
+
+        #endregion
+
+        #region VIP专属地图（安全区/练功区）
+
+        /// <summary>
+        /// VIP专属地图ID列表，-1表示无专属地图
+        /// </summary>
+        public int GetVipMapId()
+        {
+            return VipLevel switch
+            {
+                VipLevel.Gold => 2015,      // 钻石会员专属地图
+                VipLevel.Diamond => 2015,
+                VipLevel.Royal => 2014,     // 至尊会员专属地图
+                VipLevel.Ultimate => 2013,  // 终极会员专属地图
+                _ => -1
+            };
+        }
+
+        public bool CanEnterVipMap(int mapId)
+        {
+            return IsVip() && mapId == GetVipMapId();
+        }
+
+        #endregion
+    }
+
+    public enum VipLevel
+    {
+        None = 0,
+        None_10 = 1,   // 体验VIP(10元)
+        Basic = 2,     // 基础VIP(50元)
+        Middle = 3,    // 中级VIP(100元)
+        Advanced = 4,  // 高级VIP(200元)
+        Ultimate = 5, // 终极VIP(500元)
+        Royal = 6,    // 至尊VIP(1000元)
+        Diamond = 7,  // 钻石VIP(2000元)
+        Gold = 8      // 钻石VIP(5000元)
+    }
+
+    internal class VipData
+    {
+        public int VipLevel { get; set; }
+        public string VipExpireTime { get; set; } = "";
+        public string DateLastGift { get; set; } = "";
+        public int TotalRecharge { get; set; }
+    }
+
     #endregion
 
 }

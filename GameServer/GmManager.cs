@@ -228,6 +228,10 @@ namespace GameServer
                     return CmdInlay(player, args);
                 case "REMOVEGEM":
                     return CmdRemoveGem(player, args);
+                case "SETVIP":
+                    return CmdSetVip(player, args);
+                case "VIPGIFT":
+                    return CmdVipGift(player);
                 default:
                     player.SaySystem($"未实现命令: {builtinCommand}");
                     return 0;
@@ -481,6 +485,23 @@ namespace GameServer
             string result = player.GemInlaySystem.RemoveGem(eq, hole);
             player.SaySystem(result);
             return result.Contains("已取下") ? 1u : 0;
+        }
+
+        private static uint CmdSetVip(HumanPlayer player, string[] args)
+        {
+            if (player.VipSystem == null) { player.SaySystem("VIP系统不可用"); return 0; }
+            if (args.Length < 1) { player.SaySystem("用法: @SETVIP <等级0-8> [天数默认365]"); return 0; }
+            if (!int.TryParse(args[0], out int level)) { player.SaySystem("等级必须是数字"); return 0; }
+            int days = args.Length > 1 && int.TryParse(args[1], out int d) ? d : 365;
+            player.VipSystem.SetVipLevel(level, days);
+            return 1;
+        }
+
+        private static uint CmdVipGift(HumanPlayer player)
+        {
+            if (player.VipSystem == null) { player.SaySystem("VIP系统不可用"); return 0; }
+            player.VipSystem.TryClaimDailyGift();
+            return 1;
         }
 
         private static bool TryParseCmdListLine(string line, out int level, out string alias, out string builtin)
