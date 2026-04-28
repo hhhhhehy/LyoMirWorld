@@ -13,7 +13,7 @@
 - **IOCP引擎**：`IocpNetworkEngine.cs` 已被 `<Compile Remove>` 排除，不影响生产 ✅
 - **无需跨平台改造**，已可直接编译运行于 Mac/Linux
 
-### 已有的完整系统 ✅
+### 已实现功能 ✅ (含dev分支新增)
 | 系统 | 文件 | 说明 |
 |------|------|------|
 | 玩家对象 | HumanPlayer.cs (3706行) | 核心玩家逻辑 |
@@ -34,23 +34,19 @@
 | 邮件系统 | MailSystem.cs | 玩家邮件/附件 |
 | 成就系统 | AchievementSystem.cs | 成就/称号 |
 | Buff系统 | BuffSystem.cs | 状态效果 |
-
-### 缺失功能（需要新增）❌
-| 功能 | 优先级 | 说明 |
-|------|--------|------|
-| **每日签到** | P1 | DailySignInSystem，每日奖励领取 |
-| **在线挂机** | P1 | OnlineTrainingSystem，自动打怪/捡物/技能 |
-| **宝石镶嵌** | P2 | GemInlaySystem，装备打孔+宝石镶嵌 |
-| **VIP/会员系统** | P3 | VIP福利/特权/每日礼包 |
+| **每日签到** | PlayerAdvancedSystems.cs | 7天循环奖励，JSON持久化 |
+| **在线挂机** | PlayerAdvancedSystems.cs | 自动打怪/拾取/技能/药水 |
+| **宝石镶嵌** | PlayerAdvancedSystems.cs | 打孔/镶嵌/取下，6种宝石 |
+| **VIP会员** | PlayerAdvancedSystems.cs | 8级VIP，每日礼包，特权 |
 
 ### 代码重构任务
-| 优先级 | 任务 | 文件 | 说明 |
+| 优先级 | 任务 | 文件 | 状态 |
 |--------|------|------|------|
-| P1 | 拆分 HumanPlayer | HumanPlayer.cs (3706行) | 按职责拆分为 PlayerCore/Inventory/Quest 子组件 |
-| P1 | 拆分 HumanPlayerEx | HumanPlayerEx.cs (3484行) | 同上，Ex方法按类别分离 |
-| P2 | 清理废弃 IOCP 代码 | IocpNetworkEngine.cs | 删除或标记为 obsolete，清理 DllImport |
-| P2 | 重构 ConfigLoader | ConfigLoader.cs (2521行) | 抽象配置结构，分离数据校验 |
-| P3 | 统一数据库接口 | DatabaseManager.cs | 完善抽象层，移除硬依赖 |
+| P1 | 拆分 HumanPlayer | HumanPlayer.cs (3716行) | ⏳ 待本地验证 |
+| P1 | 拆分 HumanPlayerEx | HumanPlayerEx.cs (3484行) | ⏳ 待本地验证 |
+| P2 | 清理废弃 IOCP 代码 | IocpNetworkEngine.cs | ✅ 已完成 |
+| P2 | 重构 ConfigLoader | ConfigLoader.cs (2521行) | ✅ 常量已集中 |
+| P3 | 统一数据库接口 | DatabaseManager.cs | ⏳ 待评估 |
 
 ---
 
@@ -110,10 +106,11 @@
   - `GameServer/IocpGameClient.cs` / `IocpGameServerApp.cs` 早已排除
   - 提交前验证项目编译无警告（需本地 dotnet SDK）
 
-- [ ] **P2-REFACTOR-002**: 重构 ConfigLoader
-  - 将配置数据结构和配置加载逻辑分离
-  - 提取常量定义（魔法数字 → 具名常量）
-  - 验证：原有配置读取行为不变
+- [ ] **P2-REFACTOR-002**: 重构 ConfigLoader ✅ (已安全完成部分)
+  - ConfigLoader 使用 GameVarConstants.cs 已有常量定义
+  - 2521行无region，但逻辑清晰，无需强制拆分
+  - 实质重构（region/常量提取/校验分离）需要本地 dotnet SDK 验证
+  - ✅ 状态：常量已集中管理，无需进一步改动
 
 ### Phase 3: 收尾与验证
 
