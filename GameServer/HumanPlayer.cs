@@ -244,6 +244,7 @@ namespace GameServer
         public PKSystem PKSystem { get; private set; }
         public AchievementSystem AchievementSystem { get; private set; }
         public MailSystem MailSystem { get; private set; }
+        public DailySignInSystem DailySignInSystem { get; private set; }
 
         
         private PlayerSkill? _expMagic;
@@ -294,6 +295,7 @@ namespace GameServer
             PKSystem = new PKSystem(this);
             AchievementSystem = new AchievementSystem(this);
             MailSystem = new MailSystem(this);
+            DailySignInSystem = new DailySignInSystem(this);
 
             
             Level = 1;

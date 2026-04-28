@@ -918,6 +918,17 @@ namespace GameServer
                 case "EXIT":
                     EndInteraction(player.ObjectId);
                     break;
+                case "SIGNIN":
+                    {
+                        player.DailySignInSystem.Load();
+                        bool success = player.DailySignInSystem.SignIn();
+                        if (success)
+                        {
+                            var status = player.DailySignInSystem.GetStatus();
+                            player.Say($"连续签到：{status.ConsecutiveDays}天 | 累计：{status.TotalDays}天");
+                        }
+                    }
+                    break;
             }
         }
 

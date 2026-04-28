@@ -1350,4 +1350,231 @@ namespace GameServer
         public bool AttachmentsClaimed { get; set; }
         public DateTime? ClaimTime { get; set; }
     }
+
+    #region 每日签到系统
+
+    /// <summary>
+    /// 每日签到系统
+    /// - 连续签到递增奖励（7天一轮回）
+    /// - 断签重置连续天数
+    /// - 奖励：金币/经验/物品
+    /// - 存储：JSON文件（每个角色独立文件）
+    /// </summary>
+    public class DailySignInSystem
+    {
+        private readonly HumanPlayer _owner;
+
+        // 签到状态（内存）
+        private DateTime _lastSignInDate;         // 上次签到日期
+        private int _consecutiveDays;              // 连续签到天数
+        private bool _todaySigned;                // 今日是否已签到
+        private uint _totalSignInDays;            // 累计签到天数
+
+        // JSON存储路径
+        private static readonly string SignInDataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data", "SignIn");
+        private string SignInFilePath => Path.Combine(SignInDataDir, $"{_owner.CharDBId}.json");
+
+        // 7天签到奖励配置（按连续天数索引，1-7天）
+        private static readonly DailyReward[] DailyRewards = new[]
+        {
+            new DailyReward { Day = 1,  Gold = 1000,   Exp = 5000,   ItemId = 0,   ItemCount = 0,  Desc = "1天奖励" },
+            new DailyReward { Day = 2,  Gold = 2000,   Exp = 10000,  ItemId = 0,   ItemCount = 0,  Desc = "2天奖励" },
+            new DailyReward { Day = 3,  Gold = 3000,   Exp = 15000,  ItemId = 0,   ItemCount = 0,  Desc = "3天奖励" },
+            new DailyReward { Day = 4,  Gold = 5000,   Exp = 25000,  ItemId = 0,   ItemCount = 0,  Desc = "4天奖励" },
+            new DailyReward { Day = 5,  Gold = 8000,   Exp = 40000,  ItemId = 0,   ItemCount = 0,  Desc = "5天奖励" },
+            new DailyReward { Day = 6,  Gold = 12000,  Exp = 60000,  ItemId = 0,   ItemCount = 0,  Desc = "6天奖励" },
+            new DailyReward { Day = 7,  Gold = 20000,  Exp = 100000, ItemId = 42001, ItemCount = 1, Desc = "7天大奖" }, // 祝福油
+        };
+
+        public DailySignInSystem(HumanPlayer owner)
+        {
+            _owner = owner;
+            _lastSignInDate = DateTime.MinValue;
+            _consecutiveDays = 0;
+            _todaySigned = false;
+            _totalSignInDays = 0;
+        }
+
+        /// <summary>
+        /// 初始化时加载签到数据
+        /// </summary>
+        public void Load()
+        {
+            try
+            {
+                if (!File.Exists(SignInFilePath))
+                    return;
+
+                var json = File.ReadAllText(SignInFilePath, System.Text.Encoding.UTF8);
+                var data = System.Text.Json.JsonSerializer.Deserialize<SignInData>(json);
+                if (data == null) return;
+
+                _consecutiveDays = data.ConsecutiveDays;
+                _totalSignInDays = data.TotalDays;
+                _lastSignInDate = data.LastSignInDate;
+                _todaySigned = IsToday(_lastSignInDate);
+            }
+            catch (Exception ex)
+            {
+                LogManager.Default.Error($"加载签到数据失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 保存签到数据到文件
+        /// </summary>
+        private void Save()
+        {
+            try
+            {
+                if (!Directory.Exists(SignInDataDir))
+                    Directory.CreateDirectory(SignInDataDir);
+
+                var data = new SignInData
+                {
+                    CharId = _owner.CharDBId,
+                    ConsecutiveDays = _consecutiveDays,
+                    TotalDays = _totalSignInDays,
+                    LastSignInDate = _lastSignInDate
+                };
+
+                var json = System.Text.Json.JsonSerializer.Serialize(data, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+                File.WriteAllText(SignInFilePath, json, System.Text.Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                LogManager.Default.Error($"保存签到数据失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 执行签到
+        /// </summary>
+        public bool SignIn()
+        {
+            var now = DateTime.Today;
+
+            if (_todaySigned)
+            {
+                _owner.Say("今日已签到，明天再来吧！");
+                return false;
+            }
+
+            // 检查是否连续（昨天签到过）
+            var yesterday = now.AddDays(-1);
+            bool isConsecutive = IsSameDay(_lastSignInDate, yesterday);
+
+            if (isConsecutive)
+            {
+                _consecutiveDays++;
+            }
+            else
+            {
+                // 断签，重置连续天数
+                _consecutiveDays = 1;
+            }
+
+            _todaySigned = true;
+            _lastSignInDate = now;
+            _totalSignInDays++;
+
+            // 获取当前连续天数的奖励（1-7循环）
+            int rewardDay = ((_consecutiveDays - 1) % 7) + 1;
+            var reward = DailyRewards[rewardDay - 1];
+
+            // 发放奖励
+            _owner.AddGold(reward.Gold);
+            _owner.AddExp(reward.Exp);
+
+            string rewardMsg = $"获得奖励：{reward.Gold}金币、{reward.Exp}经验";
+            if (reward.ItemId > 0 && reward.ItemCount > 0)
+            {
+                var item = _owner.Inventory.AddItem(reward.ItemId, reward.ItemCount);
+                if (item != null)
+                {
+                    rewardMsg += $"、{item.Definition.Name} x{reward.ItemCount}";
+                }
+            }
+
+            _owner.Say($"=== 签到成功！第{_consecutiveDays}天 ===");
+            _owner.Say(rewardMsg);
+            _owner.Say($"累计签到：{_totalSignInDays}天");
+            LogManager.Default.Info($"玩家 {_owner.Name} 签到成功：第{_consecutiveDays}天，累计{_totalSignInDays}天");
+
+            // 触发成就更新
+            _owner.AchievementSystem?.UpdateProgress(AchievementType.SignIn, 1);
+
+            // 保存
+            Save();
+
+            return true;
+        }
+
+        /// <summary>
+        /// 获取签到状态信息（用于客户端显示）
+        /// </summary>
+        public SignInStatusInfo GetStatus()
+        {
+            int rewardDay = (_todaySigned ? _consecutiveDays : (_consecutiveDays == 0 ? 0 : _consecutiveDays)) % 7;
+            if (rewardDay == 0) rewardDay = 7;
+
+            return new SignInStatusInfo
+            {
+                TodaySigned = _todaySigned,
+                ConsecutiveDays = _consecutiveDays,
+                TotalDays = _totalSignInDays,
+                CurrentRewardDay = rewardDay
+            };
+        }
+
+        private static bool IsToday(DateTime date)
+        {
+            return IsSameDay(date, DateTime.Today);
+        }
+
+        private static bool IsSameDay(DateTime a, DateTime b)
+        {
+            return a.Year == b.Year && a.Month == b.Month && a.Day == b.Day;
+        }
+    }
+
+    /// <summary>
+    /// 签到数据（JSON序列化用）
+    /// </summary>
+    internal class SignInData
+    {
+        public uint CharId { get; set; }
+        public int ConsecutiveDays { get; set; }
+        public uint TotalDays { get; set; }
+        public DateTime LastSignInDate { get; set; }
+    }
+
+    /// <summary>
+    /// 单日签到奖励配置
+    /// </summary>
+    public class DailyReward
+    {
+        public int Day { get; set; }
+        public uint Gold { get; set; }
+        public uint Exp { get; set; }
+        public int ItemId { get; set; }
+        public int ItemCount { get; set; }
+        public string Desc { get; set; } = "";
+    }
+
+    /// <summary>
+    /// 签到状态信息（用于客户端显示）
+    /// </summary>
+    public class SignInStatusInfo
+    {
+        public bool TodaySigned { get; set; }
+        public int ConsecutiveDays { get; set; }
+        public uint TotalDays { get; set; }
+        public int CurrentRewardDay { get; set; }
+    }
+
+    #endregion
 }
