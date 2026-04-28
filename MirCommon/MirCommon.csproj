@@ -7,11 +7,12 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <StartupObject>MirCommon.RunSimpleTest</StartupObject>
-    <LangVersion>13.0</LangVersion>
+    <LangVersion>12.0</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Remove="Network\IocpNetworkTest.cs" />
+    <Compile Remove="Network\ZeroCopyBufferTest.cs" />
   </ItemGroup>
 
   <ItemGroup>

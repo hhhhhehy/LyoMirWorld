@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using MirCommon;
 using MirCommon.Network;
+using MirCommon.Utils;
 
 namespace GameServer
 {
@@ -1314,7 +1316,8 @@ namespace GameServer
         JoinGuild,
         PvPKill,
         UseSkill,
-        CraftItem
+        CraftItem,
+        SignIn
     }
     
     
@@ -1492,10 +1495,15 @@ namespace GameServer
             string rewardMsg = $"获得奖励：{reward.Gold}金币、{reward.Exp}经验";
             if (reward.ItemId > 0 && reward.ItemCount > 0)
             {
-                var item = _owner.Inventory.AddItem(reward.ItemId, reward.ItemCount);
-                if (item != null)
+                var itemDef = ItemManager.Instance.GetDefinition(reward.ItemId);
+                if (itemDef != null)
                 {
-                    rewardMsg += $"、{item.Definition.Name} x{reward.ItemCount}";
+                    var item = new ItemInstance(itemDef, (long)ItemManager.Instance.AllocateTempMakeIndex());
+                    item.Count = reward.ItemCount;
+                    if (_owner.Inventory.AddItem(item))
+                    {
+                        rewardMsg += $"、{itemDef.Name} x{reward.ItemCount}";
+                    }
                 }
             }
 
@@ -1540,6 +1548,8 @@ namespace GameServer
             return a.Year == b.Year && a.Month == b.Month && a.Day == b.Day;
         }
     }
+
+    #endregion
 
     /// <summary>
     /// 签到数据（JSON序列化用）
@@ -1606,7 +1616,7 @@ namespace GameServer
         private int _autoSkillSlot = 0;      // 自动释放技能槽位（-1=不用技能）
 
         // 挂机状态
-        private MonsterSystem.Monster? _currentTarget;
+        private Monster? _currentTarget;
         private int _targetDeadCount;        // 连续未找到目标计数
         private int _stuckCount;             // 卡住计数
 
@@ -1778,7 +1788,9 @@ namespace GameServer
                 var hpPotion = FindPotionItem(0); // 0=太阳水类型，实际按道具定义
                 if (hpPotion != null)
                 {
-                    _owner.UseItem(hpPotion.Position);
+                    int slot = _owner.Inventory.FindSlotByMakeIndex(hpPotion.GetMakeIndex());
+                    if (slot >= 0)
+                        _owner.UseItem(slot);
                     _lastHealTime = now;
                     return true;
                 }
@@ -1790,7 +1802,9 @@ namespace GameServer
                 var mpPotion = FindMpPotionItem();
                 if (mpPotion != null)
                 {
-                    _owner.UseItem(mpPotion.Position);
+                    int slot = _owner.Inventory.FindSlotByMakeIndex(mpPotion.GetMakeIndex());
+                    if (slot >= 0)
+                        _owner.UseItem(slot);
                     _lastHealTime = now;
                     return true;
                 }
@@ -1801,11 +1815,11 @@ namespace GameServer
 
         private ItemInstance? FindPotionItem(int potionType)
         {
-            foreach (var item in _owner.Inventory.Items)
+            foreach (var item in _owner.Inventory.GetAllItems().Values)
             {
                 if (item == null) continue;
-                // 简单判断：DBID 小于某阈值的是HP药水
-                if (item.Definition.DBID >= 20000 && item.Definition.DBID <= 20999)
+                // 简单判断：ItemId 在某阈值范围的是HP药水
+                if (item.ItemId >= 20000 && item.ItemId <= 20999)
                     return item;
             }
             return null;
@@ -1813,11 +1827,11 @@ namespace GameServer
 
         private ItemInstance? FindMpPotionItem()
         {
-            foreach (var item in _owner.Inventory.Items)
+            foreach (var item in _owner.Inventory.GetAllItems().Values)
             {
                 if (item == null) continue;
                 // 魔法药水
-                if (item.Definition.DBID >= 21000 && item.Definition.DBID <= 21999)
+                if (item.ItemId >= 21000 && item.ItemId <= 21999)
                     return item;
             }
             return null;
@@ -1853,7 +1867,7 @@ namespace GameServer
         private bool PickupItem(MapItem mapItem)
         {
             // 检查背包是否有空间
-            if (!_owner.Inventory.HasSlot())
+            if (_owner.Inventory.GetUsedSlots() >= _owner.Inventory.MaxSlots)
             {
                 return false;
             }
@@ -1935,18 +1949,18 @@ namespace GameServer
             }
         }
 
-        private MonsterSystem.Monster? FindMonster()
+        private Monster? FindMonster()
         {
             var map = _owner.CurrentMap as LogicMap;
             if (map == null) return null;
 
             var monsters = map.GetMonstersInRange(_owner.X, _owner.Y, _searchRange);
-            MonsterSystem.Monster? nearest = null;
+            Monster? nearest = null;
             int minDist = int.MaxValue;
 
             foreach (var m in monsters)
             {
-                if (m is not MonsterSystem.Monster monster)
+                if (m is not Monster monster)
                     continue;
                 if (monster.IsDead)
                     continue;
@@ -2037,13 +2051,12 @@ namespace GameServer
         // 装备可打孔数量上限（按品质）
         private static readonly Dictionary<ItemQuality, int> MaxHolesByQuality = new()
         {
-            { ItemQuality.Gray, 0 },      // 白板不可打孔
-            { ItemQuality.White, 1 },      // 白装1孔
-            { ItemQuality.Green, 2 },      // 绿装2孔
-            { ItemQuality.Blue, 3 },       // 蓝装3孔
-            { ItemQuality.Purple, 4 },     // 紫装4孔
-            { ItemQuality.Orange, 5 },     // 橙装5孔
-            { ItemQuality.Gold, 6 },       // 金装6孔
+            { ItemQuality.Normal, 0 },      // 白板不可打孔
+            { ItemQuality.Fine, 1 },      // 白装1孔
+            { ItemQuality.Rare, 2 },      // 绿装2孔
+            { ItemQuality.Epic, 3 },       // 蓝装3孔
+            { ItemQuality.Legendary, 4 },     // 紫装4孔
+            { ItemQuality.Mythic, 5 },     // 橙装5孔
         };
 
         // 宝石类型枚举
@@ -2106,7 +2119,7 @@ namespace GameServer
             equipment.ExtraStats[$"Hole_{newHoleIndex}"] = 0; // 0表示空孔
             equipment.ExtraStats["HoleCount"] = currentHoles + 1;
 
-            _owner.Equipment.RecalcTotalStats();
+            _owner.RecalcTotalStats();
             return $"打孔成功！消耗 {cost} 金币。";
         }
 
@@ -2137,12 +2150,16 @@ namespace GameServer
             if (gemItem.Count > 1)
                 gemItem.Count--;
             else
-                _owner.Inventory.RemoveItem(gemItem, notify: false);
+            {
+                int slot = _owner.Inventory.FindSlotByMakeIndex(gemItem.GetMakeIndex());
+                if (slot >= 0)
+                    _owner.Inventory.RemoveItem(slot, 1);
+            }
 
             // 镶嵌
             equipment.ExtraStats[holeKey] = (int)gemType;
 
-            _owner.Equipment.RecalcTotalStats();
+            _owner.RecalcTotalStats();
             return $"成功镶嵌 {gemItem.Definition.Name}！";
         }
 
@@ -2164,17 +2181,17 @@ namespace GameServer
             if (gemTypeValue == 0)
                 return "该孔位是空的";
 
-            if (!_owner.Inventory.HasFreeSlot())
+            if (_owner.Inventory.GetUsedSlots() >= _owner.Inventory.MaxSlots)
                 return "背包空间不足，无法取下宝石";
 
             var gemType = (GemType)gemTypeValue;
             string gemName = GetGemName(gemType);
 
             // 返还宝石给玩家
-            var gemDef = _owner.GetItemDefByName(gemName);
+            var gemDef = ItemManager.Instance.GetDefinitionByName(gemName);
             if (gemDef != null)
             {
-                var gemInstance = ItemInstance.Create(gemDef, ItemManager.Instance.GetNextInstanceId());
+                var gemInstance = new ItemInstance(gemDef, (long)ItemManager.Instance.AllocateTempMakeIndex());
                 if (gemInstance != null)
                     _owner.Inventory.AddItem(gemInstance);
             }
@@ -2182,7 +2199,7 @@ namespace GameServer
             // 清空孔位
             equipment.ExtraStats[holeKey] = 0;
 
-            _owner.Equipment.RecalcTotalStats();
+            _owner.RecalcTotalStats();
             return $"已取下 {gemName}。";
         }
 
@@ -2298,7 +2315,7 @@ namespace GameServer
 
         #region 数据加载/保存
 
-        private string GetFilePath() => Path.Combine(VipDataPath, $"{_owner.CharId}.json");
+        private string GetFilePath() => Path.Combine(VipDataPath, $"{_owner.CharDBId}.json");
 
         public void Load()
         {
@@ -2307,7 +2324,7 @@ namespace GameServer
                 string path = GetFilePath();
                 if (!File.Exists(path)) return;
                 var json = File.ReadAllText(path);
-                var data = JsonConvert.DeserializeObject<VipData>(json);
+                var data = JsonSerializer.Deserialize<VipData>(json);
                 if (data == null) return;
                 VipLevel = (VipLevel)data.VipLevel;
                 VipExpireTime = DateTime.Parse(data.VipExpireTime);
@@ -2329,7 +2346,7 @@ namespace GameServer
                     DateLastGift = DateLastGift.ToString("O"),
                     TotalRecharge = TotalRecharge
                 };
-                string json = JsonConvert.SerializeObject(data, Formatting.Indented);
+                string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(GetFilePath(), json);
             }
             catch { }
@@ -2352,7 +2369,7 @@ namespace GameServer
                 VipLevel = newLevel;
                 VipExpireTime = DateTime.Now.AddYears(1);
                 Save();
-                _owner.SendNotice($"恭喜！您的VIP等级提升至 {(int)VipLevel}级");
+                _owner.SaySystem($"恭喜！您的VIP等级提升至 {(int)VipLevel}级");
             }
         }
 
@@ -2364,7 +2381,7 @@ namespace GameServer
             VipLevel = (VipLevel)Math.Clamp(level, 0, 8);
             VipExpireTime = DateTime.Now.AddDays(days);
             Save();
-            _owner.SendNotice($"VIP等级已设置为 {(int)VipLevel}级，有效期{days}天");
+            _owner.SaySystem($"VIP等级已设置为 {(int)VipLevel}级，有效期{days}天");
         }
 
         private static VipLevel CalculateVipLevel(int totalRecharge)
@@ -2456,27 +2473,32 @@ namespace GameServer
         {
             if (!IsVip())
             {
-                _owner.SendNotice("您还不是VIP会员，无法领取每日礼包");
+                _owner.SaySystem("您还不是VIP会员，无法领取每日礼包");
                 return;
             }
             DateTime today = DateTime.Today;
             if (DateLastGift.Date == today)
             {
-                _owner.SendNotice("今日礼包已领取，请明天再来");
+                _owner.SaySystem("今日礼包已领取，请明天再来");
                 return;
             }
             DateLastGift = today;
             int gold = GetDailyGiftGold();
-            if (gold > 0) _owner.AddGold(gold);
+            if (gold > 0) _owner.AddGold((uint)gold);
             // VIP专属道具礼包（按等级）
             var items = GetDailyGiftItems();
-            foreach (var (itemId, count) in items)
+            foreach (var (itemName, count) in items)
             {
-                _owner.Items.AddItem(itemId, count);
+                var itemDef = ItemManager.Instance.GetDefinitionByName(itemName);
+                if (itemDef != null)
+                {
+                    var item = new ItemInstance(itemDef, (long)ItemManager.Instance.AllocateTempMakeIndex());
+                    item.Count = count;
+                    _owner.Inventory.AddItem(item);
+                }
             }
             Save();
-            _owner.SendNotice($"恭喜领取VIP{(int)VipLevel}每日礼包：{gold:N0}金币 + 道具");
-            _owner.SendGmPacket($"VIP每日礼包领取成功，金币{gold:N0}");
+            _owner.SaySystem($"恭喜领取VIP{(int)VipLevel}每日礼包：{gold:N0}金币 + 道具");
         }
 
         private List<(string ItemId, int Count)> GetDailyGiftItems()
@@ -2555,6 +2577,7 @@ namespace GameServer
         public int TotalRecharge { get; set; }
     }
 
+    #endregion
     #endregion
 
 }
