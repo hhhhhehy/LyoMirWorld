@@ -46,7 +46,7 @@
 | P1 | 拆分 HumanPlayerEx | HumanPlayerEx.cs (3484行) | ⏳ 待本地验证 |
 | P2 | 清理废弃 IOCP 代码 | IocpNetworkEngine.cs | ✅ 已完成 |
 | P2 | 重构 ConfigLoader | ConfigLoader.cs (2521行) | ✅ 常量已集中 |
-| P3 | 统一数据库接口 | DatabaseManager.cs | ⏳ 待评估 |
+| P3 | 统一数据库接口 | DatabaseManager.cs | ✅ 已有DatabaseFactory抽象层，支持SQLite/MySQL/SqlServer |
 
 ---
 
@@ -128,6 +128,18 @@
 
 ---
 
+## 不计划实现的功能（官方有但本作无）
+
+| 功能 | 原因 |
+|------|------|
+| **邮件系统** Mail | 已有完整实现，不缺失 |
+| **成就系统** Achievement | 已有完整实现，不缺失 |
+| **宠物/坐骑** Pet/Mount | 已有完整实现，不缺失 |
+| **元神系统** Avatar/Spirit | 官方有但服务端未实现，需客户端协议分析，超出私服范围 |
+| **IOCP网络引擎** | 已废弃，跨平台TcpListener已够用 |
+
+---
+
 ## 执行约束
 
 - **每次完成任务必须 git commit**，格式：`feat: 完成任务 - {任务名}`
@@ -139,3 +151,5 @@
 ---
 
 _Last Updated: 2026-04-28_
+
+_Next: dev分支推送需Ayu本地验证（git pull + dotnet build），剩余P1-REFACTOR-001/002_
